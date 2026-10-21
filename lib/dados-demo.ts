@@ -113,10 +113,10 @@ export const ORDENS_DEMO: OrdemServico[] = [
 ];
 
 export const ITENS_DEMO: ItemOS[] = [
-  { id: "i1", os_id: "o1", tipo: "peca", descricao: "Pastilha de freio dianteira", quantidade: 1, valor_unit: 149 },
+  { id: "i1", os_id: "o1", tipo: "peca", descricao: "Pastilha de freio dianteira", quantidade: 1, valor_unit: 149, produto_id: "p3" },
   { id: "i2", os_id: "o1", tipo: "servico", descricao: "Troca de pastilhas dianteiras", quantidade: 1, valor_unit: 120 },
-  { id: "i3", os_id: "o2", tipo: "peca", descricao: "Óleo 5W30 sintético 1L", quantidade: 1, valor_unit: 49.9 },
-  { id: "i4", os_id: "o2", tipo: "peca", descricao: "Filtro de óleo", quantidade: 1, valor_unit: 32 },
+  { id: "i3", os_id: "o2", tipo: "peca", descricao: "Óleo 5W30 sintético 1L", quantidade: 1, valor_unit: 49.9, produto_id: "p1" },
+  { id: "i4", os_id: "o2", tipo: "peca", descricao: "Filtro de óleo", quantidade: 1, valor_unit: 32, produto_id: "p2" },
   { id: "i5", os_id: "o2", tipo: "servico", descricao: "Revisão completa", quantidade: 1, valor_unit: 350 },
 ];
 

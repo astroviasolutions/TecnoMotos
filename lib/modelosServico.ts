@@ -1,3 +1,4 @@
+import { DEMO, supabase } from "./supabase";
 import type { Produto } from "./tipos";
 
 /**
@@ -82,4 +83,33 @@ export function totalizarItensResolvidos(itens: ItemModeloResolvido[]) {
   const valor_pecas = itens.filter((i) => i.tipo === "peca").reduce((s, i) => s + i.quantidade * i.valor_unit, 0);
   const valor_servicos = itens.filter((i) => i.tipo === "servico").reduce((s, i) => s + i.quantidade * i.valor_unit, 0);
   return { valor_pecas, valor_servicos, valor_total: valor_pecas + valor_servicos };
+}
+
+// Serviços cadastrados pela pessoa (além dos prontos acima) — pedido
+// do Christian: "não deixou a possibilidade de cadastrar novos
+// serviços". Guardados em modelos_servico_rapido (ver
+// supabase/2026-10-20-modelos-servico-rapido.sql); em modo demo fica
+// só na memória da sessão.
+let modelosDemo: ModeloServicoRapido[] = [];
+
+export async function carregarModelosPersonalizados(): Promise<ModeloServicoRapido[]> {
+  if (DEMO || !supabase) return modelosDemo;
+  const { data } = await supabase.from("modelos_servico_rapido").select("*").order("criado_em");
+  return (data ?? []).map((d) => ({ id: d.id, nome: d.nome, itens: d.itens }));
+}
+
+export async function salvarModeloPersonalizado(modelo: ModeloServicoRapido): Promise<void> {
+  if (DEMO || !supabase) {
+    modelosDemo = [...modelosDemo.filter((m) => m.id !== modelo.id), modelo];
+    return;
+  }
+  await supabase.from("modelos_servico_rapido").upsert({ id: modelo.id, nome: modelo.nome, itens: modelo.itens });
+}
+
+export async function removerModeloPersonalizado(id: string): Promise<void> {
+  if (DEMO || !supabase) {
+    modelosDemo = modelosDemo.filter((m) => m.id !== id);
+    return;
+  }
+  await supabase.from("modelos_servico_rapido").delete().eq("id", id);
 }

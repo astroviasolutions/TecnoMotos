@@ -7,7 +7,16 @@ import Campo from "@/components/ui/Campo";
 import TrailPlateButton from "@/components/TrailPlateButton";
 import { DEMO, supabase } from "@/lib/supabase";
 import { buscarHistoricoDemoPorPlaca, PRODUTOS_DEMO } from "@/lib/dados-demo";
-import { MODELOS_SERVICO_RAPIDO, resolverItensModelo, totalizarItensResolvidos } from "@/lib/modelosServico";
+import {
+  MODELOS_SERVICO_RAPIDO,
+  carregarModelosPersonalizados,
+  removerModeloPersonalizado,
+  resolverItensModelo,
+  salvarModeloPersonalizado,
+  totalizarItensResolvidos,
+  type ItemModeloServico,
+  type ModeloServicoRapido,
+} from "@/lib/modelosServico";
 import { brl, normalizarPlaca, type Produto } from "@/lib/tipos";
 
 interface VeiculoConhecido {
@@ -39,6 +48,54 @@ export default function EntradaRapidaPage() {
   const [consultandoPlaca, setConsultandoPlaca] = useState(false);
   const [conhecido, setConhecido] = useState<VeiculoConhecido | null>(null);
   const [placaConsultada, setPlacaConsultada] = useState("");
+
+  // Serviços cadastrados pela pessoa — pedido do Christian: "não
+  // deixou a possibilidade de cadastrar novos serviços".
+  const [modelosPersonalizados, setModelosPersonalizados] = useState<ModeloServicoRapido[]>([]);
+  const [cadastrandoServico, setCadastrandoServico] = useState(false);
+  const [novoNome, setNovoNome] = useState("");
+  const [novosItens, setNovosItens] = useState<ItemModeloServico[]>([{ tipo: "servico", descricao: "", quantidade: 1, valorPadrao: 0 }]);
+  const [salvandoServico, setSalvandoServico] = useState(false);
+
+  const recarregarModelos = () => carregarModelosPersonalizados().then(setModelosPersonalizados);
+  useEffect(() => {
+    recarregarModelos();
+  }, []);
+
+  const todosModelos = [...MODELOS_SERVICO_RAPIDO, ...modelosPersonalizados];
+
+  const atualizarNovoItem = (i: number, campo: keyof ItemModeloServico, valor: string) => {
+    setNovosItens((atual) =>
+      atual.map((it, idx) =>
+        idx !== i
+          ? it
+          : { ...it, [campo]: campo === "quantidade" || campo === "valorPadrao" ? Number(valor.replace(",", ".")) || 0 : valor },
+      ),
+    );
+  };
+
+  const salvarNovoServico = async () => {
+    const itensValidos = novosItens.filter((it) => it.descricao.trim());
+    if (!novoNome.trim() || itensValidos.length === 0) return;
+    setSalvandoServico(true);
+    const modelo: ModeloServicoRapido = {
+      id: `custom-${Date.now()}`,
+      nome: novoNome.trim(),
+      itens: itensValidos,
+    };
+    await salvarModeloPersonalizado(modelo);
+    await recarregarModelos();
+    setNovoNome("");
+    setNovosItens([{ tipo: "servico", descricao: "", quantidade: 1, valorPadrao: 0 }]);
+    setCadastrandoServico(false);
+    setSalvandoServico(false);
+  };
+
+  const excluirServico = async (idParaExcluir: string) => {
+    await removerModeloPersonalizado(idParaExcluir);
+    await recarregarModelos();
+    if (modeloId === idParaExcluir) setModeloId(null);
+  };
 
   // Preços reais do estoque pra casar com os itens do modelo (mesma
   // regra de app/ordens/[id]/page.tsx — ver resolverItensModelo).
@@ -97,7 +154,7 @@ export default function EntradaRapidaPage() {
     }
   };
 
-  const modelo = MODELOS_SERVICO_RAPIDO.find((m) => m.id === modeloId) ?? null;
+  const modelo = todosModelos.find((m) => m.id === modeloId) ?? null;
   const itensResolvidos = modelo ? resolverItensModelo(modelo, produtos) : [];
   const totais = totalizarItensResolvidos(itensResolvidos);
 
@@ -237,20 +294,83 @@ export default function EntradaRapidaPage() {
       <PainelVidro className="flex flex-col gap-3 p-5">
         <h2 className="font-display text-[13px] uppercase text-zinc-200">Serviço</h2>
         <div className="flex flex-wrap gap-2">
-          {MODELOS_SERVICO_RAPIDO.map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setModeloId(m.id)}
-              className={`rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
-                modeloId === m.id
-                  ? "border-amber-400/60 bg-amber-400/20 text-amber-200"
-                  : "border-white/10 bg-white/5 text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              {m.nome}
-            </button>
+          {todosModelos.map((m) => (
+            <span key={m.id} className="inline-flex items-center gap-1">
+              <button
+                onClick={() => setModeloId(m.id)}
+                className={`rounded-full border px-4 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
+                  modeloId === m.id
+                    ? "border-amber-400/60 bg-amber-400/20 text-amber-200"
+                    : "border-white/10 bg-white/5 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {m.nome}
+              </button>
+              {m.id.startsWith("custom-") && (
+                <button
+                  onClick={() => excluirServico(m.id)}
+                  aria-label={`Excluir ${m.nome}`}
+                  className="shrink-0 rounded-full border border-red-500/30 bg-red-500/10 px-1.5 py-1 text-[10px] font-bold text-red-400 hover:bg-red-500/20"
+                >
+                  ✕
+                </button>
+              )}
+            </span>
           ))}
+          <button
+            onClick={() => setCadastrandoServico((v) => !v)}
+            className="rounded-full border border-dashed border-white/20 px-4 py-2 text-xs font-bold uppercase tracking-wide text-zinc-400 hover:text-zinc-200"
+          >
+            {cadastrandoServico ? "✕ Cancelar" : "+ Novo serviço"}
+          </button>
         </div>
+
+        {cadastrandoServico && (
+          <div className="flex flex-col gap-3 rounded-lg border border-white/10 bg-black/30 p-4">
+            <Campo label="Nome do serviço" value={novoNome} onChange={setNovoNome} placeholder="Ex.: Revisão básica" />
+            {novosItens.map((it, i) => (
+              <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 sm:grid-cols-[90px_1fr_60px_90px]">
+                <select
+                  value={it.tipo}
+                  onChange={(e) => atualizarNovoItem(i, "tipo", e.target.value)}
+                  className="campo-instrumento rounded-md border border-white/10 bg-black/30 px-2 py-2 text-xs text-zinc-100 outline-none"
+                >
+                  <option value="servico">Serviço</option>
+                  <option value="peca">Peça</option>
+                </select>
+                <input
+                  value={it.descricao}
+                  onChange={(e) => atualizarNovoItem(i, "descricao", e.target.value)}
+                  placeholder="Descrição"
+                  className="campo-instrumento min-w-0 rounded-md border border-white/10 bg-black/30 px-2 py-2 text-xs text-zinc-100 outline-none"
+                />
+                <input
+                  value={it.quantidade}
+                  onChange={(e) => atualizarNovoItem(i, "quantidade", e.target.value)}
+                  placeholder="Qtd."
+                  inputMode="decimal"
+                  className="campo-instrumento min-w-0 rounded-md border border-white/10 bg-black/30 px-2 py-2 text-xs text-zinc-100 outline-none"
+                />
+                <input
+                  value={it.valorPadrao || ""}
+                  onChange={(e) => atualizarNovoItem(i, "valorPadrao", e.target.value)}
+                  placeholder="R$"
+                  inputMode="decimal"
+                  className="campo-instrumento min-w-0 rounded-md border border-white/10 bg-black/30 px-2 py-2 text-xs text-zinc-100 outline-none"
+                />
+              </div>
+            ))}
+            <button
+              onClick={() => setNovosItens((a) => [...a, { tipo: "servico", descricao: "", quantidade: 1, valorPadrao: 0 }])}
+              className="w-fit text-xs text-zinc-400 underline decoration-dotted underline-offset-4 hover:text-zinc-200"
+            >
+              + item
+            </button>
+            <TrailPlateButton tamanho="sm" onClick={salvarNovoServico} disabled={salvandoServico}>
+              {salvandoServico ? "Salvando…" : "Salvar serviço"}
+            </TrailPlateButton>
+          </div>
+        )}
 
         {modelo && (
           <div className="mt-1 divide-y divide-white/5 border-t border-white/5 pt-3">

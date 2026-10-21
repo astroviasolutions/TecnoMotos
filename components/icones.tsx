@@ -13,6 +13,7 @@ export const IcoSol = ({ size, className }: P) => (<svg {...base(size)} classNam
 export const IcoLua = ({ size, className }: P) => (<svg {...base(size)} className={className}><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" /></svg>);
 export const IcoBusca = ({ size, className }: P) => (<svg {...base(size)} className={className}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>);
 export const IcoChave = ({ size, className }: P) => (<svg {...base(size)} className={className}><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.4-.6-.6-2.4 2.6-2.6Z" /></svg>);
+export const IcoRaio = ({ size, className }: P) => (<svg {...base(size)} className={className}><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" /></svg>);
 
 export const NAV = [
   { href: "/", rotulo: "Início", Ico: IcoInicio },

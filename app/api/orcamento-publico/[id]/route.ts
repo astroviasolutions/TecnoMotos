@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO } from "@/lib/supabase";
+import { idDoLink } from "@/lib/idPublico";
 import { ITENS_DEMO, ORDENS_DEMO } from "@/lib/dados-demo";
 
 /**
@@ -13,7 +14,8 @@ import { ITENS_DEMO, ORDENS_DEMO } from "@/lib/dados-demo";
  * clientes/veículos.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: idBruto } = await params;
+  const id = idDoLink(idBruto);
 
   if (DEMO) {
     const os = ORDENS_DEMO.find((o) => o.id === id);

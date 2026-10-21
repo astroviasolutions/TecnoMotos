@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { DEMO } from "@/lib/supabase";
+import { idDoLink } from "@/lib/idPublico";
 import { ORDENS_DEMO } from "@/lib/dados-demo";
 import { cpfValido, formatarCpf } from "@/lib/cpf";
 
@@ -17,7 +18,8 @@ import { cpfValido, formatarCpf } from "@/lib/cpf";
  * espírito da mensagem de erro em app/ordens/[id]/page.tsx).
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: idBruto } = await params;
+  const id = idDoLink(idBruto);
 
   let corpo: { nome?: string; cpf?: string };
   try {

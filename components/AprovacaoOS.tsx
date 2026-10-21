@@ -4,6 +4,7 @@ import { useState } from "react";
 import TrailPlateButton from "@/components/TrailPlateButton";
 import { DEMO, supabase } from "@/lib/supabase";
 import { gerarPdfOrcamento } from "@/lib/gerarPdfOrcamento";
+import { idParaLink } from "@/lib/idPublico";
 import { brl, type ItemOS, type OrdemServico, type StatusOS } from "@/lib/tipos";
 
 interface AprovacaoOSProps {
@@ -85,14 +86,16 @@ export default function AprovacaoOS({ os, itens, total, onStatusAtualizado }: Ap
     }
     setEnviando(true);
     try {
-      const linkPublico = `${window.location.origin}/aprovar/${os.id}`;
+      const linkPublico = `${window.location.origin}/aprovar/${idParaLink(os.id)}`;
       const texto =
         `Olá${os.clientes?.nome ? ", " + os.clientes.nome : ""}! Segue o orçamento da OS ${String(os.numero).padStart(
           4,
           "0",
-        )} da TECNOMOTOS. Total: ${brl(total)}. ` +
-        `Você pode ver os detalhes, baixar o PDF e aprovar direto por aqui: ${linkPublico}`;
-      window.open(`https://wa.me/55${telefone}?text=${encodeURIComponent(texto)}`, "_blank", "noopener,noreferrer");
+        )} da TECNOMOTOS. Total: ${brl(total)}.\n\n` +
+        `Veja os detalhes, baixe o PDF e aprove por aqui:\n${linkPublico}`;
+      // Telefone já salvo com DDI 55 não pode ganhar outro 55.
+      const numero = telefone.startsWith("55") && telefone.length >= 12 ? telefone : `55${telefone}`;
+      window.open(`https://wa.me/${numero}?text=${encodeURIComponent(texto)}`, "_blank", "noopener,noreferrer");
       await avancarParaAguardandoAprovacao();
     } finally {
       setEnviando(false);

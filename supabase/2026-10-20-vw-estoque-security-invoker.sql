@@ -1,0 +1,18 @@
+-- Corrige o alerta "Security Definer View" apontado pelo Supabase
+-- Advisor na view vw_estoque.
+--
+-- Por padrão, uma view do Postgres enxerga as tabelas por baixo com o
+-- nível de acesso de QUEM CRIOU a view (geralmente um usuário
+-- administrador, sem restrição nenhuma) — não de quem está
+-- consultando de verdade pela API. Isso significa que vw_estoque
+-- podia estar "furando" a política de RLS que criamos pra exigir
+-- login antes de ler produtos/estoque_movimentos: mesmo alguém sem
+-- sessão (anônimo) conseguiria puxar o estoque inteiro via essa view,
+-- já que ela não respeitava a mesma regra das tabelas.
+--
+-- security_invoker = true faz a view passar a respeitar a permissão
+-- de quem está consultando de verdade, igual as tabelas normais —
+-- sem efeito nenhum pra quem já está logado no sistema (continua
+-- funcionando exatamente igual), só fecha essa brecha pra quem não
+-- está.
+alter view vw_estoque set (security_invoker = true);

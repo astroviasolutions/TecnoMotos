@@ -15,6 +15,7 @@ import AprovacaoOS from "@/components/AprovacaoOS";
 import { RevealGroup, RevealItem } from "@/components/ui/Reveal";
 import { DEMO, supabase } from "@/lib/supabase";
 import { ORDENS_DEMO, ITENS_DEMO, PRODUTOS_DEMO } from "@/lib/dados-demo";
+import { MODELOS_SERVICO_RAPIDO, type ModeloServicoRapido } from "@/lib/modelosServico";
 import {
   brl,
   COLUNAS_KANBAN,
@@ -27,6 +28,13 @@ import {
 } from "@/lib/tipos";
 
 const TODOS_STATUS: StatusOS[] = [...COLUNAS_KANBAN, "entregue"];
+
+/** Status em que a OS ainda não tem a aprovação do cliente — é só a
+ * partir desses que um modelo de serviço rápido pode empurrar a OS
+ * direto pra "aprovado" (pular a autorização). Uma OS que já passou
+ * dessa etapa (em execução, aguardando peça, finalizada, entregue)
+ * não regride de status só por ganhar um item novo. */
+const STATUS_PRE_APROVACAO: StatusOS[] = ["recepcao", "diagnostico", "aguardando_aprovacao"];
 
 /** Soma os itens por tipo e devolve os três valores que a
  * ordens_servico guarda — é o que mantém o quadro de Ordens e o
@@ -156,6 +164,24 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
   const [valorNovo, setValorNovo] = useState("");
   const [adicionando, setAdicionando] = useState(false);
   const [erroItem, setErroItem] = useState("");
+
+  // Edição direta de um item já lançado (nome/qtd./preço) — pedido do
+  // Christian: "deixe editável o nome e preço... para não ter que ficar
+  // apagando". Se o item tiver produto_id (veio do estoque), salvar
+  // também corrige o produto no estoque inteiro, não só nesta OS.
+  const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
+  const [edDescricao, setEdDescricao] = useState("");
+  const [edQuantidade, setEdQuantidade] = useState("1");
+  const [edValorUnit, setEdValorUnit] = useState("");
+  const [salvandoEdicaoItem, setSalvandoEdicaoItem] = useState(false);
+  const [erroEdicaoItem, setErroEdicaoItem] = useState("");
+
+  // Modelos de serviço rápido (ex.: "Troca de óleo") — lança o pacote
+  // de itens inteiro de uma vez e já aprova a OS sem esperar o cliente
+  // autorizar pelo link do WhatsApp.
+  const [aplicandoModelo, setAplicandoModelo] = useState<string | null>(null);
+  const [erroModelo, setErroModelo] = useState("");
+  const [modeloAplicado, setModeloAplicado] = useState("");
   // Desconto da OS: aceita "R$ 20", "20,00" ou "10%"; pode ser ajustado
   // mesmo depois de finalizada (cliente pediu desconto na entrega etc.)
   const [descontoTxt, setDescontoTxt] = useState<string | null>(null);
@@ -307,6 +333,8 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
     setAdicionando(true);
     setErroItem("");
 
+    const produtoId = tipoNovo === "peca" && produtoNovo ? produtoNovo : null;
+
     if (DEMO || !supabase) {
       await new Promise((r) => setTimeout(r, 300));
       const novo: ItemOS = {
@@ -316,6 +344,7 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
         descricao: descricaoNovo.trim(),
         quantidade,
         valor_unit: valor_unit || 0,
+        produto_id: produtoId,
       };
       const proximosItens = [...itens, novo];
       setItens(proximosItens);
@@ -326,13 +355,19 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
       return;
     }
 
-    const { error: eItem } = await supabase.from("os_itens").insert({
+    const linhaItem = {
       os_id: id,
       tipo: tipoNovo,
       descricao: descricaoNovo.trim(),
       quantidade,
       valor_unit: valor_unit || 0,
-    });
+    };
+    let { error: eItem } = await supabase.from("os_itens").insert({ ...linhaItem, produto_id: produtoId });
+    if (eItem && produtoId) {
+      // Coluna produto_id pode não existir ainda (migração pendente) —
+      // tenta de novo sem ela, pra não travar o lançamento do item.
+      ({ error: eItem } = await supabase.from("os_itens").insert(linhaItem));
+    }
     if (eItem) {
       setErroItem(eItem.message);
       setAdicionando(false);
@@ -391,6 +426,184 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
     if (os) {
       await supabase.from("ordens_servico").update(somarItens(restantes, os.valor_desconto)).eq("id", id);
     }
+    carregar();
+  };
+
+  const iniciarEdicaoItem = (item: ItemOS) => {
+    setEditandoItemId(item.id);
+    setEdDescricao(item.descricao);
+    setEdQuantidade(String(item.quantidade));
+    setEdValorUnit(String(item.valor_unit));
+    setErroEdicaoItem("");
+  };
+
+  const cancelarEdicaoItem = () => {
+    setEditandoItemId(null);
+    setErroEdicaoItem("");
+  };
+
+  /** Salva nome/qtd./preço editados direto no item da OS — sem precisar
+   * apagar e relançar. Quando o item tem produto_id (veio do estoque),
+   * a mesma correção também é aplicada no produto, pra não ficar só
+   * nesta OS (pedido do Christian: "altere no estoque todo"). */
+  const salvarEdicaoItem = async (item: ItemOS) => {
+    const quantidade = Number(edQuantidade.replace(",", "."));
+    const valor_unit = lerValor(edValorUnit);
+    if (!edDescricao.trim()) {
+      setErroEdicaoItem("Descreva a peça ou o serviço.");
+      return;
+    }
+    if (!quantidade || quantidade <= 0) {
+      setErroEdicaoItem("Quantidade precisa ser maior que zero.");
+      return;
+    }
+    setSalvandoEdicaoItem(true);
+    setErroEdicaoItem("");
+
+    const descricao = edDescricao.trim();
+    const restantes = itens.map((i) => (i.id === item.id ? { ...i, descricao, quantidade, valor_unit } : i));
+
+    if (DEMO || !supabase) {
+      await new Promise((r) => setTimeout(r, 300));
+      setItens(restantes);
+      setOs((atual) => (atual ? { ...atual, ...somarItens(restantes, atual.valor_desconto) } : atual));
+      if (item.produto_id) {
+        setProdutos((atual) => atual.map((p) => (p.id === item.produto_id ? { ...p, nome: descricao, preco_venda: valor_unit } : p)));
+      }
+      setSalvandoEdicaoItem(false);
+      setEditandoItemId(null);
+      return;
+    }
+
+    const { error: eItem } = await supabase
+      .from("os_itens")
+      .update({ descricao, quantidade, valor_unit })
+      .eq("id", item.id);
+    if (eItem) {
+      setErroEdicaoItem(eItem.message);
+      setSalvandoEdicaoItem(false);
+      return;
+    }
+
+    if (os) {
+      await supabase.from("ordens_servico").update(somarItens(restantes, os.valor_desconto)).eq("id", id);
+    }
+
+    if (item.produto_id) {
+      // Melhor esforço: se isso falhar (ex.: peça excluída do estoque
+      // nesse meio tempo), o item da OS já foi salvo normalmente —
+      // só não propaga pro cadastro da peça.
+      const { error: eProduto } = await supabase
+        .from("produtos")
+        .update({ nome: descricao, preco_venda: valor_unit })
+        .eq("id", item.produto_id);
+      if (!eProduto) {
+        setProdutos((atual) => atual.map((p) => (p.id === item.produto_id ? { ...p, nome: descricao, preco_venda: valor_unit } : p)));
+      }
+    }
+
+    setSalvandoEdicaoItem(false);
+    setEditandoItemId(null);
+    carregar();
+  };
+
+  /** Lança de uma vez o pacote de itens de um modelo de serviço rápido
+   * (ex.: "Troca de óleo") e, se a OS ainda não tiver sido
+   * aprovada/autorizada pelo cliente, já avança ela pra "aprovado" —
+   * pedido do Christian: "já sair a NF do cliente, sem ter que
+   * autorizar". Depois de aplicado, "Baixar PDF" (painel abaixo) já
+   * gera a nota com os itens lançados. */
+  const aplicarModeloRapido = async (modelo: ModeloServicoRapido) => {
+    if (!os) return;
+    setAplicandoModelo(modelo.id);
+    setErroModelo("");
+    setModeloAplicado("");
+
+    // Peça do modelo com produto correspondente no estoque (por nome)
+    // usa o preço real do estoque e fica vinculada a ele; sem
+    // correspondência, usa o valor padrão do modelo e segue sem vínculo.
+    const itensResolvidos = modelo.itens.map((it) => {
+      if (it.tipo !== "peca") return { ...it, produto_id: null as string | null, valor_unit: it.valorPadrao };
+      const produto = produtos.find((p) => p.nome.trim().toLowerCase() === it.descricao.trim().toLowerCase());
+      return {
+        tipo: it.tipo,
+        descricao: produto?.nome ?? it.descricao,
+        quantidade: it.quantidade,
+        valor_unit: produto?.preco_venda ?? it.valorPadrao,
+        produto_id: produto?.id ?? null,
+      };
+    });
+
+    const avancaStatus = STATUS_PRE_APROVACAO.includes(os.status);
+    const novoStatus: StatusOS = avancaStatus ? "aprovado" : os.status;
+
+    if (DEMO || !supabase) {
+      await new Promise((r) => setTimeout(r, 400));
+      const novosItens: ItemOS[] = itensResolvidos.map((it, i) => ({
+        id: `demo-modelo-${Date.now()}-${i}`,
+        os_id: id,
+        tipo: it.tipo,
+        descricao: it.descricao,
+        quantidade: it.quantidade,
+        valor_unit: it.valor_unit,
+        produto_id: it.produto_id,
+      }));
+      const proximosItens = [...itens, ...novosItens];
+      setItens(proximosItens);
+      setOs((atual) => (atual ? { ...atual, ...somarItens(proximosItens, atual.valor_desconto), status: novoStatus } : atual));
+      setStatusSelecionado(novoStatus);
+      setAplicandoModelo(null);
+      setModeloAplicado(`${modelo.nome} lançado${avancaStatus ? " e OS já aprovada" : ""} — baixe o PDF abaixo.`);
+      return;
+    }
+
+    const linhas = itensResolvidos.map((it) => ({
+      os_id: id,
+      tipo: it.tipo,
+      descricao: it.descricao,
+      quantidade: it.quantidade,
+      valor_unit: it.valor_unit,
+      produto_id: it.produto_id,
+    }));
+    let { error: eItens } = await supabase.from("os_itens").insert(linhas);
+    if (eItens) {
+      // Coluna produto_id pode não existir ainda — tenta de novo sem ela.
+      const linhasSemProduto = linhas.map((l) => ({
+        os_id: l.os_id,
+        tipo: l.tipo,
+        descricao: l.descricao,
+        quantidade: l.quantidade,
+        valor_unit: l.valor_unit,
+      }));
+      ({ error: eItens } = await supabase.from("os_itens").insert(linhasSemProduto));
+    }
+    if (eItens) {
+      setErroModelo(eItens.message);
+      setAplicandoModelo(null);
+      return;
+    }
+
+    const movimentos = itensResolvidos.filter((it) => it.tipo === "peca" && it.produto_id).map((it) => ({
+      produto_id: it.produto_id,
+      tipo: "saida_os" as const,
+      quantidade: it.quantidade,
+    }));
+    if (movimentos.length > 0) {
+      await supabase.from("estoque_movimentos").insert(movimentos);
+    }
+
+    const itensComTemp: ItemOS[] = [
+      ...itens,
+      ...itensResolvidos.map((it) => ({ id: "temp", os_id: id, tipo: it.tipo, descricao: it.descricao, quantidade: it.quantidade, valor_unit: it.valor_unit })),
+    ];
+    await supabase
+      .from("ordens_servico")
+      .update({ ...somarItens(itensComTemp, os.valor_desconto), status: novoStatus })
+      .eq("id", id);
+
+    setStatusSelecionado(novoStatus);
+    setAplicandoModelo(null);
+    setModeloAplicado(`${modelo.nome} lançado${avancaStatus ? " e OS já aprovada" : ""} — baixe o PDF abaixo.`);
     carregar();
   };
 
@@ -568,26 +781,78 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
             )}
           </div>
 
+          {os.status !== "cancelado" && os.status !== "entregue" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-b border-white/5 pb-3">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">⚡ Serviço rápido:</span>
+              {MODELOS_SERVICO_RAPIDO.map((modelo) => (
+                <button
+                  key={modelo.id}
+                  onClick={() => aplicarModeloRapido(modelo)}
+                  disabled={aplicandoModelo !== null}
+                  className="rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs font-bold text-amber-300 transition-colors hover:bg-amber-400/20 disabled:opacity-50"
+                >
+                  {aplicandoModelo === modelo.id ? "Lançando…" : modelo.nome}
+                </button>
+              ))}
+            </div>
+          )}
+          {erroModelo && <p className="mt-2 text-sm text-red-400">{erroModelo}</p>}
+          {modeloAplicado && <p className="mt-2 text-sm text-emerald-400">{modeloAplicado}</p>}
+
           <div className="mt-3 divide-y divide-white/5">
             {itens.length === 0 && <Vazio titulo="Sem itens ainda" texto="Lance os serviços e peças para montar o orçamento." />}
-            {itens.map((i) => (
-              <div key={i.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                <div className="min-w-0 flex-1">
-                  <span className="block truncate text-zinc-300">{i.descricao}</span>
-                  <span className="text-[10px] uppercase tracking-wide text-zinc-600">
-                    {i.tipo === "peca" ? "Peça" : "Serviço"} · {i.quantidade}x {brl(i.valor_unit)}
-                  </span>
+            {itens.map((i) =>
+              editandoItemId === i.id ? (
+                <div key={i.id} className="flex flex-col gap-2 py-2.5">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div className="col-span-2">
+                      <Campo label="Descrição" value={edDescricao} onChange={setEdDescricao} />
+                    </div>
+                    <Campo label="Qtd." value={edQuantidade} onChange={setEdQuantidade} inputMode="decimal" />
+                    <Campo label="Valor unit. (R$)" value={edValorUnit} onChange={setEdValorUnit} inputMode="decimal" />
+                  </div>
+                  {i.produto_id && (
+                    <p className="text-[11px] text-amber-300/80">Isso também atualiza esse produto no estoque.</p>
+                  )}
+                  {erroEdicaoItem && <p className="text-xs text-red-400">{erroEdicaoItem}</p>}
+                  <div className="flex gap-2">
+                    <TrailPlateButton tamanho="sm" onClick={() => salvarEdicaoItem(i)} disabled={salvandoEdicaoItem}>
+                      {salvandoEdicaoItem ? "Salvando…" : "Salvar"}
+                    </TrailPlateButton>
+                    <button
+                      onClick={cancelarEdicaoItem}
+                      className="rounded-md border border-white/10 px-3 text-xs font-bold uppercase tracking-wide text-zinc-400 hover:text-zinc-200"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
                 </div>
-                <span className="shrink-0 font-mono text-zinc-400">{brl(i.quantidade * i.valor_unit)}</span>
-                <button
-                  onClick={() => removerItem(i.id)}
-                  aria-label="Remover item"
-                  className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs font-bold text-red-400 transition-colors hover:bg-red-500/20"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
+              ) : (
+                <div key={i.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-zinc-300">{i.descricao}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-zinc-600">
+                      {i.tipo === "peca" ? "Peça" : "Serviço"} · {i.quantidade}x {brl(i.valor_unit)}
+                    </span>
+                  </div>
+                  <span className="shrink-0 font-mono text-zinc-400">{brl(i.quantidade * i.valor_unit)}</span>
+                  <button
+                    onClick={() => iniciarEdicaoItem(i)}
+                    aria-label="Editar item"
+                    className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs font-bold text-zinc-300 transition-colors hover:bg-white/10"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={() => removerItem(i.id)}
+                    aria-label="Remover item"
+                    className="shrink-0 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs font-bold text-red-400 transition-colors hover:bg-red-500/20"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ),
+            )}
           </div>
 
           {formAberto && (

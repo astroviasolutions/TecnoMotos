@@ -15,7 +15,7 @@ import AprovacaoOS from "@/components/AprovacaoOS";
 import { RevealGroup, RevealItem } from "@/components/ui/Reveal";
 import { DEMO, supabase } from "@/lib/supabase";
 import { ORDENS_DEMO, ITENS_DEMO, PRODUTOS_DEMO } from "@/lib/dados-demo";
-import { MODELOS_SERVICO_RAPIDO, type ModeloServicoRapido } from "@/lib/modelosServico";
+import { MODELOS_SERVICO_RAPIDO, resolverItensModelo, type ModeloServicoRapido } from "@/lib/modelosServico";
 import {
   brl,
   COLUNAS_KANBAN,
@@ -170,6 +170,7 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
   // apagando". Se o item tiver produto_id (veio do estoque), salvar
   // também corrige o produto no estoque inteiro, não só nesta OS.
   const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
+  const [edProdutoId, setEdProdutoId] = useState("");
   const [edDescricao, setEdDescricao] = useState("");
   const [edQuantidade, setEdQuantidade] = useState("1");
   const [edValorUnit, setEdValorUnit] = useState("");
@@ -431,6 +432,7 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
 
   const iniciarEdicaoItem = (item: ItemOS) => {
     setEditandoItemId(item.id);
+    setEdProdutoId(item.produto_id ?? "");
     setEdDescricao(item.descricao);
     setEdQuantidade(String(item.quantidade));
     setEdValorUnit(String(item.valor_unit));
@@ -442,10 +444,25 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
     setErroEdicaoItem("");
   };
 
+  /** Escolher um produto do estoque no formulário de edição preenche
+   * nome/preço com os dados reais dele (igual ao "+ Adicionar") — a
+   * pessoa ainda pode ajustar os campos depois de escolher. Pedido do
+   * Christian: a edição "precisa puxar do estoque". */
+  const escolherProdutoEdicao = (produtoId: string) => {
+    setEdProdutoId(produtoId);
+    const p = produtos.find((x) => x.id === produtoId);
+    if (p) {
+      setEdDescricao(p.nome);
+      setEdValorUnit(String(p.preco_venda));
+    }
+  };
+
   /** Salva nome/qtd./preço editados direto no item da OS — sem precisar
-   * apagar e relançar. Quando o item tem produto_id (veio do estoque),
-   * a mesma correção também é aplicada no produto, pra não ficar só
-   * nesta OS (pedido do Christian: "altere no estoque todo"). */
+   * apagar e relançar. Se a edição estiver vinculada a um produto do
+   * estoque (seja porque o item já veio de lá, seja porque a pessoa
+   * acabou de escolher um aqui), a mesma correção também é aplicada no
+   * produto, pra não ficar só nesta OS (pedido do Christian: "altere
+   * no estoque todo"). */
   const salvarEdicaoItem = async (item: ItemOS) => {
     const quantidade = Number(edQuantidade.replace(",", "."));
     const valor_unit = lerValor(edValorUnit);
@@ -461,24 +478,30 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
     setErroEdicaoItem("");
 
     const descricao = edDescricao.trim();
-    const restantes = itens.map((i) => (i.id === item.id ? { ...i, descricao, quantidade, valor_unit } : i));
+    const produtoId = edProdutoId || null;
+    const restantes = itens.map((i) => (i.id === item.id ? { ...i, descricao, quantidade, valor_unit, produto_id: produtoId } : i));
 
     if (DEMO || !supabase) {
       await new Promise((r) => setTimeout(r, 300));
       setItens(restantes);
       setOs((atual) => (atual ? { ...atual, ...somarItens(restantes, atual.valor_desconto) } : atual));
-      if (item.produto_id) {
-        setProdutos((atual) => atual.map((p) => (p.id === item.produto_id ? { ...p, nome: descricao, preco_venda: valor_unit } : p)));
+      if (produtoId) {
+        setProdutos((atual) => atual.map((p) => (p.id === produtoId ? { ...p, nome: descricao, preco_venda: valor_unit } : p)));
       }
       setSalvandoEdicaoItem(false);
       setEditandoItemId(null);
       return;
     }
 
-    const { error: eItem } = await supabase
+    let { error: eItem } = await supabase
       .from("os_itens")
-      .update({ descricao, quantidade, valor_unit })
+      .update({ descricao, quantidade, valor_unit, produto_id: produtoId })
       .eq("id", item.id);
+    if (eItem) {
+      // Coluna produto_id pode não existir ainda (migração pendente) —
+      // tenta de novo sem ela, pra não travar a edição do item.
+      ({ error: eItem } = await supabase.from("os_itens").update({ descricao, quantidade, valor_unit }).eq("id", item.id));
+    }
     if (eItem) {
       setErroEdicaoItem(eItem.message);
       setSalvandoEdicaoItem(false);
@@ -489,16 +512,16 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
       await supabase.from("ordens_servico").update(somarItens(restantes, os.valor_desconto)).eq("id", id);
     }
 
-    if (item.produto_id) {
+    if (produtoId) {
       // Melhor esforço: se isso falhar (ex.: peça excluída do estoque
       // nesse meio tempo), o item da OS já foi salvo normalmente —
       // só não propaga pro cadastro da peça.
       const { error: eProduto } = await supabase
         .from("produtos")
         .update({ nome: descricao, preco_venda: valor_unit })
-        .eq("id", item.produto_id);
+        .eq("id", produtoId);
       if (!eProduto) {
-        setProdutos((atual) => atual.map((p) => (p.id === item.produto_id ? { ...p, nome: descricao, preco_venda: valor_unit } : p)));
+        setProdutos((atual) => atual.map((p) => (p.id === produtoId ? { ...p, nome: descricao, preco_venda: valor_unit } : p)));
       }
     }
 
@@ -522,17 +545,8 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
     // Peça do modelo com produto correspondente no estoque (por nome)
     // usa o preço real do estoque e fica vinculada a ele; sem
     // correspondência, usa o valor padrão do modelo e segue sem vínculo.
-    const itensResolvidos = modelo.itens.map((it) => {
-      if (it.tipo !== "peca") return { ...it, produto_id: null as string | null, valor_unit: it.valorPadrao };
-      const produto = produtos.find((p) => p.nome.trim().toLowerCase() === it.descricao.trim().toLowerCase());
-      return {
-        tipo: it.tipo,
-        descricao: produto?.nome ?? it.descricao,
-        quantidade: it.quantidade,
-        valor_unit: produto?.preco_venda ?? it.valorPadrao,
-        produto_id: produto?.id ?? null,
-      };
-    });
+    // (mesma regra usada na Entrada rápida — ver resolverItensModelo)
+    const itensResolvidos = resolverItensModelo(modelo, produtos);
 
     const avancaStatus = STATUS_PRE_APROVACAO.includes(os.status);
     const novoStatus: StatusOS = avancaStatus ? "aprovado" : os.status;
@@ -804,6 +818,23 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
             {itens.map((i) =>
               editandoItemId === i.id ? (
                 <div key={i.id} className="flex flex-col gap-2 py-2.5">
+                  {i.tipo === "peca" && (
+                    <label className="block">
+                      <span className="mb-1.5 block text-[11px] uppercase tracking-wide text-zinc-500">Produto do estoque</span>
+                      <select
+                        value={edProdutoId}
+                        onChange={(e) => escolherProdutoEdicao(e.target.value)}
+                        className="campo-instrumento w-full rounded-md border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-zinc-100 outline-none"
+                      >
+                        <option value="">Descrição manual…</option>
+                        {produtos.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.nome} {p.saldo != null ? `(${p.saldo} un.)` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <div className="col-span-2">
                       <Campo label="Descrição" value={edDescricao} onChange={setEdDescricao} />
@@ -811,7 +842,7 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
                     <Campo label="Qtd." value={edQuantidade} onChange={setEdQuantidade} inputMode="decimal" />
                     <Campo label="Valor unit. (R$)" value={edValorUnit} onChange={setEdValorUnit} inputMode="decimal" />
                   </div>
-                  {i.produto_id && (
+                  {edProdutoId && (
                     <p className="text-[11px] text-amber-300/80">Isso também atualiza esse produto no estoque.</p>
                   )}
                   {erroEdicaoItem && <p className="text-xs text-red-400">{erroEdicaoItem}</p>}

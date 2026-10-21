@@ -125,6 +125,12 @@ export interface ItemOS {
   descricao: string;
   quantidade: number;
   valor_unit: number;
+  /** Produto do estoque que esta peça representa (null pra serviço/mão
+   * de obra, ou pra uma peça descrita manualmente sem vínculo). Editar
+   * nome/preço de um item com produto_id também atualiza o produto no
+   * estoque — ver supabase/2026-10-20-item-produto-vinculo.sql.
+   * Opcional porque só existe depois dessa migração rodar. */
+  produto_id?: string | null;
 }
 
 /** Só os campos que o PDF do orçamento (lib/gerarPdfOrcamento.ts) de

@@ -12,6 +12,7 @@ import Campo from "@/components/ui/Campo";
 import TrailPlateButton from "@/components/TrailPlateButton";
 import CameraCaptura from "@/components/CameraCaptura";
 import AprovacaoOS from "@/components/AprovacaoOS";
+import EditarDadosOS from "@/components/EditarDadosOS";
 import { RevealGroup, RevealItem } from "@/components/ui/Reveal";
 import { DEMO, supabase } from "@/lib/supabase";
 import { ORDENS_DEMO, ITENS_DEMO, PRODUTOS_DEMO } from "@/lib/dados-demo";
@@ -686,17 +687,7 @@ export default function PaginaOS({ params }: PageProps<"/ordens/[id]">) {
 
       <RevealItem>
         <PainelVidro corStatus={STATUS_COR[os.status]} className="p-5">
-          <p className="text-sm font-medium text-zinc-100">{os.clientes?.nome ?? "Sem cliente"}</p>
-          <p className="text-xs text-zinc-500">
-            {[os.veiculos?.marca, os.veiculos?.modelo, os.veiculos?.ano].filter(Boolean).join(" ")} · {os.veiculos?.placa}
-          </p>
-          {os.km_entrada && <p className="mt-1 text-xs text-zinc-500">{os.km_entrada.toLocaleString("pt-BR")} km na entrada</p>}
-          {os.relato_cliente && (
-            <p className="mt-3 text-sm text-zinc-300">
-              <span className="text-zinc-500">Reclamação: </span>
-              {os.relato_cliente}
-            </p>
-          )}
+          <EditarDadosOS os={os} onSalvo={(alteracoes) => setOs((atual) => (atual ? { ...atual, ...alteracoes } : atual))} />
           {os.veiculos?.fotos_url && os.veiculos.fotos_url.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2 border-t border-white/5 pt-3">
               {os.veiculos.fotos_url.map((url, i) => (
